@@ -1,11 +1,9 @@
 from __future__ import annotations
 
 import argparse
-import json
-from dataclasses import asdict
 from pathlib import Path
 
-from pointcloud_projection.io import convert_input_to_ply, save_point_cloud
+from pointcloud_projection.io import load_point_cloud
 from pointcloud_projection.paths import (
     format_project_path,
     resolve_project_path,
@@ -19,8 +17,6 @@ from pointcloud_projection.preprocess import (
 )
 from pointcloud_projection.projection import (
     build_density_artifacts,
-    build_density_point_cloud,
-    build_projected_point_cloud,
     make_projection_image,
     save_png,
 )
@@ -131,28 +127,18 @@ def build_preprocess_config(
 def build_projection_outputs(
     aligned_pcd,
     args: argparse.Namespace,
-) -> tuple[dict[str, object], object, object, object]:
+) -> tuple[dict[str, object], object]:
     artifacts = build_density_artifacts(
         aligned_pcd,
         grid_size=args.grid_size,
         log_scale=not args.no_log_density,
     )
-    projected_pcd = build_projected_point_cloud(
-        artifacts.projected_points,
-        artifacts.projected_colors,
-    )
-    density_pcd = build_density_point_cloud(
-        artifacts.projected_points,
-        artifacts.point_density_uint8,
-    )
     projection_image = make_projection_image(artifacts.projected_points[:, :2], args.image_size)
     bundle = {
         "artifacts": artifacts,
-        "projected_pcd": projected_pcd,
-        "density_pcd": density_pcd,
         "projection_image": projection_image,
     }
-    return bundle, projected_pcd, density_pcd, projection_image
+    return bundle, projection_image
 
 
 def save_final_outputs(
@@ -160,72 +146,25 @@ def save_final_outputs(
     input_path: Path,
     output_dir: Path,
     args: argparse.Namespace,
-    config: PreprocessConfig,
-    input_metadata: dict[str, object],
-    converted_input_path: Path,
-    cleaned_pcd,
     aligned_pcd,
-    preprocess_metadata: dict[str, object],
     interactive_rotate: bool = False,
-) -> dict[str, object]:
-    bundle, projected_pcd, density_pcd, projection_image = build_projection_outputs(aligned_pcd, args)
+) -> dict[str, str]:
+    bundle, projection_image = build_projection_outputs(aligned_pcd, args)
     artifacts = bundle["artifacts"]
 
     stem = input_path.stem
-    cleaned_path = Path(save_point_cloud(cleaned_pcd, output_dir / f"{stem}_cleaned.ply"))
-    aligned_path = Path(save_point_cloud(aligned_pcd, output_dir / f"{stem}_aligned.ply"))
-    projected_path = Path(save_point_cloud(projected_pcd, output_dir / f"{stem}_projected_xy.ply"))
-    density_ply_path = Path(save_point_cloud(density_pcd, output_dir / f"{stem}_density_xy.ply"))
     projection_png_path = Path(save_png(projection_image, output_dir / f"{stem}_projection.png"))
     density_png_path = Path(save_png(artifacts.density_grid_uint8, output_dir / f"{stem}_density.png"))
 
-    summary = {
-        "input": input_metadata,
-        "preprocess": preprocess_metadata,
-        "parameters": {
-            "grid_size": args.grid_size,
-            "image_size": args.image_size,
-            "sample_points": args.sample_points,
-            "log_density": not args.no_log_density,
-            "preprocess_config": asdict(config),
-        },
-        "outputs": {
-            "converted_input_ply": format_project_path(converted_input_path),
-            "cleaned_ply": format_project_path(cleaned_path),
-            "aligned_ply": format_project_path(aligned_path),
-            "projected_xy_ply": format_project_path(projected_path),
-            "density_xy_ply": format_project_path(density_ply_path),
-            "projection_png": format_project_path(projection_png_path),
-            "density_png": format_project_path(density_png_path),
-        },
-        "mode": {
-            "interactive_rotate": interactive_rotate,
-        },
-        "stats": {
-            "raw_point_count": int(input_metadata.get("raw_point_count", 0)),
-            "cleaned_point_count": len(cleaned_pcd.points),
-            "aligned_point_count": len(aligned_pcd.points),
-            "projected_point_count": len(projected_pcd.points),
-            "density_point_count": len(density_pcd.points),
-            "density_nonzero_cells": int((artifacts.density_grid > 0).sum()),
-            "density_max_count": int(artifacts.density_grid.max()) if artifacts.density_grid.size else 0,
-            "projection_image_shape": list(projection_image.shape),
-            "density_image_shape": list(artifacts.density_grid_uint8.shape),
-        },
+    outputs = {
+        "projection_png": format_project_path(projection_png_path),
+        "density_png": format_project_path(density_png_path),
     }
-
-    summary_path = output_dir / f"{stem}_summary.json"
-    summary_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
-
-    summary["outputs"]["summary_json"] = format_project_path(summary_path)
-    print(f"Cleaned PLY: {format_project_path(cleaned_path)}")
-    print(f"Aligned PLY: {format_project_path(aligned_path)}")
-    print(f"Projected XY PLY: {format_project_path(projected_path)}")
     print(f"Projection PNG: {format_project_path(projection_png_path)}")
     print(f"Density PNG: {format_project_path(density_png_path)}")
-    print(f"Density XY PLY: {format_project_path(density_ply_path)}")
-    print(f"Summary JSON: {format_project_path(summary_path)}")
-    return summary
+    if interactive_rotate:
+        print("Interactive rotation saved.")
+    return outputs
 
 
 def save_interactive_preview(
@@ -234,24 +173,14 @@ def save_interactive_preview(
     aligned_pcd,
     args: argparse.Namespace,
 ) -> dict[str, str]:
-    bundle, projected_pcd, density_pcd, projection_image = build_projection_outputs(aligned_pcd, args)
+    bundle, projection_image = build_projection_outputs(aligned_pcd, args)
     artifacts = bundle["artifacts"]
     stem = input_path.stem
-    aligned_preview = Path(save_point_cloud(aligned_pcd, preview_dir / f"{stem}_aligned_preview.ply"))
-    projected_preview = Path(
-        save_point_cloud(projected_pcd, preview_dir / f"{stem}_projected_xy_preview.ply")
-    )
-    density_preview = Path(
-        save_point_cloud(density_pcd, preview_dir / f"{stem}_density_xy_preview.ply")
-    )
     projection_png = Path(save_png(projection_image, preview_dir / f"{stem}_projection_preview.png"))
     density_png = Path(
         save_png(artifacts.density_grid_uint8, preview_dir / f"{stem}_density_preview.png")
     )
     return {
-        "aligned_ply": format_project_path(aligned_preview),
-        "projected_xy_ply": format_project_path(projected_preview),
-        "density_xy_ply": format_project_path(density_preview),
         "projection_png": format_project_path(projection_png),
         "density_png": format_project_path(density_png),
     }
@@ -275,28 +204,15 @@ def parse_interactive_rotation_command(command: str) -> tuple[str, tuple[float, 
 
 
 def process_one_file(input_path: Path, output_dir: Path, args: argparse.Namespace) -> dict[str, object]:
-    stem = input_path.stem
-    raw_pcd, input_metadata, converted_input_path = convert_input_to_ply(
-        input_path,
-        output_dir / f"{stem}_converted_input.ply",
-        sample_points=args.sample_points,
-    )
-    input_metadata["input_path"] = format_project_path(input_path)
-    input_metadata["raw_point_count"] = len(raw_pcd.points)
-
+    raw_pcd, _ = load_point_cloud(input_path, sample_points=args.sample_points)
     config = build_preprocess_config(args)
-    cleaned_pcd, aligned_pcd, preprocess_metadata = preprocess_point_cloud(raw_pcd, config)
+    _, aligned_pcd, _ = preprocess_point_cloud(raw_pcd, config)
 
     return save_final_outputs(
         input_path=input_path,
         output_dir=output_dir,
         args=args,
-        config=config,
-        input_metadata=input_metadata,
-        converted_input_path=converted_input_path,
-        cleaned_pcd=cleaned_pcd,
         aligned_pcd=aligned_pcd,
-        preprocess_metadata=preprocess_metadata,
         interactive_rotate=False,
     )
 
@@ -306,15 +222,7 @@ def run_interactive_rotate_session(
     output_dir: Path,
     args: argparse.Namespace,
 ) -> dict[str, object]:
-    stem = input_path.stem
-    raw_pcd, input_metadata, converted_input_path = convert_input_to_ply(
-        input_path,
-        output_dir / f"{stem}_converted_input.ply",
-        sample_points=args.sample_points,
-    )
-    input_metadata["input_path"] = format_project_path(input_path)
-    input_metadata["raw_point_count"] = len(raw_pcd.points)
-
+    raw_pcd, _ = load_point_cloud(input_path, sample_points=args.sample_points)
     base_config = build_preprocess_config(args)
     cleaned_pcd = clean_point_cloud(raw_pcd, base_config)
     preview_dir = output_dir / "_interactive_preview"
@@ -364,12 +272,7 @@ def run_interactive_rotate_session(
                 input_path=input_path,
                 output_dir=output_dir,
                 args=args,
-                config=config,
-                input_metadata=input_metadata,
-                converted_input_path=converted_input_path,
-                cleaned_pcd=cleaned_pcd,
                 aligned_pcd=aligned_pcd,
-                preprocess_metadata=preprocess_metadata,
                 interactive_rotate=True,
             )
         if action == "quit":
@@ -396,26 +299,14 @@ def main() -> int:
     input_files = collect_input_files(input_path)
     if args.interactive_rotate and len(input_files) != 1:
         raise ValueError("Interactive rotation mode only supports a single input file.")
-    run_summary: dict[str, object] = {
-        "input_path": format_project_path(input_path),
-        "output_dir": format_project_path(output_dir),
-        "file_count": len(input_files),
-        "files": [],
-    }
     if args.interactive_rotate:
         file_path = input_files[0]
         print(f"Processing interactively: {file_path}")
-        file_summary = run_interactive_rotate_session(file_path, output_dir, args)
-        run_summary["files"].append(file_summary)
+        run_interactive_rotate_session(file_path, output_dir, args)
     else:
         for file_path in input_files:
             print(f"Processing: {file_path}")
-            file_summary = process_one_file(file_path, output_dir, args)
-            run_summary["files"].append(file_summary)
-
-    batch_summary_path = output_dir / "batch_summary.json"
-    batch_summary_path.write_text(json.dumps(run_summary, ensure_ascii=False, indent=2), encoding="utf-8")
-    print(f"Batch summary JSON: {format_project_path(batch_summary_path)}")
+            process_one_file(file_path, output_dir, args)
     return 0
 
 
