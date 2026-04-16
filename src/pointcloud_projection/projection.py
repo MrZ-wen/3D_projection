@@ -14,6 +14,8 @@ class DensityArtifacts:
     projected_colors: np.ndarray | None
     density_grid: np.ndarray
     density_grid_uint8: np.ndarray
+    density_indices: np.ndarray
+    point_density_uint8: np.ndarray
     xy_min: np.ndarray
     xy_max: np.ndarray
 
@@ -26,11 +28,30 @@ def project_points_to_xy(points: np.ndarray) -> np.ndarray:
     return projected
 
 
+def compute_output_shape(points_xy: np.ndarray, max_size: int, min_size: int = 64) -> tuple[int, int]:
+    max_size = max(int(max_size), 1)
+    min_size = max(1, min(int(min_size), max_size))
+    if len(points_xy) == 0:
+        return max_size, max_size
+
+    xy = np.asarray(points_xy, dtype=float)
+    span = np.ptp(xy, axis=0)
+    x_span = max(float(span[0]), 1e-9)
+    y_span = max(float(span[1]), 1e-9)
+    dominant = max(x_span, y_span)
+
+    width = max(int(np.ceil(max_size * x_span / dominant)), min_size)
+    height = max(int(np.ceil(max_size * y_span / dominant)), min_size)
+    return width, height
+
+
 def normalize_xy_to_grid(
     points_xy: np.ndarray,
-    grid_size: int,
+    width: int,
+    height: int,
     xy_min: np.ndarray | None = None,
     xy_max: np.ndarray | None = None,
+    padding: int = 1,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     if len(points_xy) == 0:
         empty = np.zeros((0, 2), dtype=int)
@@ -41,23 +62,34 @@ def normalize_xy_to_grid(
         return empty, np.asarray(xy_min, dtype=float), np.asarray(xy_max, dtype=float)
 
     xy = np.asarray(points_xy, dtype=float)
+    width = max(int(width), 1)
+    height = max(int(height), 1)
+    padding = max(int(padding), 0)
     xy_min = np.min(xy, axis=0) if xy_min is None else np.asarray(xy_min, dtype=float)
     xy_max = np.max(xy, axis=0) if xy_max is None else np.asarray(xy_max, dtype=float)
     span = np.maximum(xy_max - xy_min, 1e-9)
     scaled = (xy - xy_min) / span
-    indices = np.rint(scaled * (grid_size - 1)).astype(int)
-    indices = np.clip(indices, 0, grid_size - 1)
+    usable_width = max(width - 1 - 2 * padding, 1)
+    usable_height = max(height - 1 - 2 * padding, 1)
+    indices = np.empty((len(xy), 2), dtype=int)
+    indices[:, 0] = padding + np.rint(scaled[:, 0] * usable_width).astype(int)
+    indices[:, 1] = padding + np.rint(scaled[:, 1] * usable_height).astype(int)
+    indices[:, 0] = np.clip(indices[:, 0], 0, width - 1)
+    indices[:, 1] = np.clip(indices[:, 1], 0, height - 1)
     return indices, xy_min, xy_max
 
 
-def compute_density_grid(points_xy: np.ndarray, grid_size: int) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    grid = np.zeros((grid_size, grid_size), dtype=np.int32)
-    indices, xy_min, xy_max = normalize_xy_to_grid(points_xy, grid_size)
+def compute_density_grid(
+    points_xy: np.ndarray, grid_size: int
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    width, height = compute_output_shape(points_xy, grid_size)
+    grid = np.zeros((height, width), dtype=np.int32)
+    indices, xy_min, xy_max = normalize_xy_to_grid(points_xy, width, height)
     if len(indices):
         x_idx = indices[:, 0]
         y_idx = indices[:, 1]
-        np.add.at(grid, (grid_size - 1 - y_idx, x_idx), 1)
-    return grid, xy_min, xy_max
+        np.add.at(grid, (height - 1 - y_idx, x_idx), 1)
+    return grid, indices, xy_min, xy_max
 
 
 def grid_to_grayscale_uint8(grid: np.ndarray, log_scale: bool = True) -> np.ndarray:
@@ -79,13 +111,25 @@ def build_density_artifacts(
     points = np.asarray(pcd.points, dtype=float)
     colors = np.asarray(pcd.colors, dtype=float) if pcd.has_colors() else None
     projected_points = project_points_to_xy(points)
-    density_grid, xy_min, xy_max = compute_density_grid(projected_points[:, :2], grid_size=grid_size)
+    density_grid, density_indices, xy_min, xy_max = compute_density_grid(
+        projected_points[:, :2],
+        grid_size=grid_size,
+    )
     density_grid_uint8 = grid_to_grayscale_uint8(density_grid, log_scale=log_scale)
+    if len(density_indices):
+        point_density_uint8 = density_grid_uint8[
+            density_grid_uint8.shape[0] - 1 - density_indices[:, 1],
+            density_indices[:, 0],
+        ]
+    else:
+        point_density_uint8 = np.zeros((0,), dtype=np.uint8)
     return DensityArtifacts(
         projected_points=projected_points,
         projected_colors=colors,
         density_grid=density_grid,
         density_grid_uint8=density_grid_uint8,
+        density_indices=density_indices,
+        point_density_uint8=point_density_uint8,
         xy_min=xy_min,
         xy_max=xy_max,
     )
@@ -100,33 +144,18 @@ def build_projected_point_cloud(points: np.ndarray, colors: np.ndarray | None = 
 
 
 def build_density_point_cloud(
-    density_grid_uint8: np.ndarray,
-    xy_min: np.ndarray,
-    xy_max: np.ndarray,
+    projected_points: np.ndarray,
+    point_density_uint8: np.ndarray,
 ) -> o3d.geometry.PointCloud:
-    grid = np.asarray(density_grid_uint8, dtype=np.uint8)
-    if grid.size == 0:
+    points = np.asarray(projected_points, dtype=float)
+    point_density_uint8 = np.asarray(point_density_uint8, dtype=np.uint8)
+    if len(points) == 0:
         return o3d.geometry.PointCloud()
-
-    nonzero = np.argwhere(grid > 0)
-    if len(nonzero) == 0:
+    if len(point_density_uint8) != len(points):
         return o3d.geometry.PointCloud()
-
-    height, width = grid.shape
-    span = np.maximum(np.asarray(xy_max, dtype=float) - np.asarray(xy_min, dtype=float), 1e-9)
-    x_step = span[0] / max(width - 1, 1)
-    y_step = span[1] / max(height - 1, 1)
-
-    points = []
-    colors = []
-    for row, col in nonzero:
-        x = float(xy_min[0] + col * x_step)
-        y = float(xy_min[1] + (height - 1 - row) * y_step)
-        gray = float(grid[row, col]) / 255.0
-        points.append([x, y, 0.0])
-        colors.append([gray, gray, gray])
-
-    return build_projected_point_cloud(np.asarray(points, dtype=float), np.asarray(colors, dtype=float))
+    gray = point_density_uint8.astype(float) / 255.0
+    colors = np.repeat(gray[:, None], 3, axis=1)
+    return build_projected_point_cloud(points, colors)
 
 
 def save_png(image_array: np.ndarray, output_path: str | Path) -> str:
@@ -137,10 +166,11 @@ def save_png(image_array: np.ndarray, output_path: str | Path) -> str:
 
 
 def make_projection_image(points_xy: np.ndarray, image_size: int) -> np.ndarray:
-    canvas = np.zeros((image_size, image_size), dtype=np.uint8)
-    indices, _, _ = normalize_xy_to_grid(points_xy, image_size)
+    width, height = compute_output_shape(points_xy, image_size)
+    canvas = np.zeros((height, width), dtype=np.uint8)
+    indices, _, _ = normalize_xy_to_grid(points_xy, width, height)
     if len(indices):
         x_idx = indices[:, 0]
         y_idx = indices[:, 1]
-        canvas[image_size - 1 - y_idx, x_idx] = 255
+        canvas[height - 1 - y_idx, x_idx] = 255
     return canvas

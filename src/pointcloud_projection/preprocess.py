@@ -15,6 +15,9 @@ class PreprocessConfig:
     black_threshold: float = 0.2
     slicing_ratio: float = 0.10
     adjustment: float = 0.0
+    rotate_x_deg: float = 0.0
+    rotate_y_deg: float = 0.0
+    rotate_z_deg: float = 0.0
 
 
 def rotation_matrix_from_vectors(vec1: np.ndarray, vec2: np.ndarray) -> np.ndarray:
@@ -33,8 +36,40 @@ def rotation_matrix_from_vectors(vec1: np.ndarray, vec2: np.ndarray) -> np.ndarr
     return np.eye(3)
 
 
-def sort_index(values: list[float], reverse: bool = True) -> list[int]:
-    return sorted(range(len(values)), reverse=reverse, key=lambda i: values[i])
+def estimate_principal_axis_pca(points: np.ndarray) -> np.ndarray:
+    points = np.asarray(points, dtype=float)
+    if len(points) < 3:
+        return np.array([0.0, 0.0, 1.0], dtype=float)
+
+    centered = points - np.mean(points, axis=0)
+    covariance = np.cov(centered, rowvar=False)
+    eigenvalues, eigenvectors = np.linalg.eigh(covariance)
+    principal_axis = np.asarray(eigenvectors[:, int(np.argmax(eigenvalues))], dtype=float)
+    norm = np.linalg.norm(principal_axis)
+    if norm <= 1e-12:
+        return np.array([0.0, 0.0, 1.0], dtype=float)
+    return principal_axis / norm
+
+
+def apply_manual_rotation(
+    pcd: o3d.geometry.PointCloud,
+    rotate_x_deg: float = 0.0,
+    rotate_y_deg: float = 0.0,
+    rotate_z_deg: float = 0.0,
+) -> tuple[o3d.geometry.PointCloud, dict[str, float]]:
+    pcd_rotated = copy.deepcopy(pcd)
+    rotation_deg = {
+        "rotate_x_deg": float(rotate_x_deg),
+        "rotate_y_deg": float(rotate_y_deg),
+        "rotate_z_deg": float(rotate_z_deg),
+    }
+    if not any(abs(value) > 1e-9 for value in rotation_deg.values()):
+        return pcd_rotated, rotation_deg
+
+    rotation_rad = tuple(np.deg2rad(rotation_deg[key]) for key in ("rotate_x_deg", "rotate_y_deg", "rotate_z_deg"))
+    rotation_matrix = pcd_rotated.get_rotation_matrix_from_xyz(rotation_rad)
+    pcd_rotated.rotate(rotation_matrix, center=(0, 0, 0))
+    return pcd_rotated, rotation_deg
 
 
 def get_bottom_slice(points: np.ndarray, slicing_ratio: float) -> np.ndarray:
@@ -303,35 +338,9 @@ def align_point_cloud_to_z(
     model_center = pcd_rotated.get_center()
     pcd_rotated.translate(-1 * model_center)
 
-    obb = pcd_rotated.get_oriented_bounding_box()
-    np_points = np.asarray(obb.get_box_points())
-
-    edge_lengths = [
-        np.linalg.norm(np_points[0] - np_points[1]),
-        np.linalg.norm(np_points[0] - np_points[2]),
-        np.linalg.norm(np_points[0] - np_points[3]),
-    ]
-    idx_sorted = sort_index(edge_lengths)
-
-    if idx_sorted[0] == 0:
-        center_0 = np.mean(np_points[[0, 2, 3, 5]], axis=0)
-        center_1 = np.mean(np_points[[1, 4, 6, 7]], axis=0)
-    elif idx_sorted[0] == 1:
-        center_0 = np.mean(np_points[[0, 1, 3, 6]], axis=0)
-        center_1 = np.mean(np_points[[2, 4, 5, 7]], axis=0)
-    else:
-        center_0 = np.mean(np_points[[0, 1, 2, 7]], axis=0)
-        center_1 = np.mean(np_points[[3, 4, 5, 6]], axis=0)
-
     target_z = np.array([0.0, 0.0, 1.0])
-    center_vector = np.array(
-        [
-            center_0[0] - center_1[0],
-            center_0[1] - center_1[1],
-            center_0[2] - center_1[2],
-        ]
-    )
-    rotation_matrix = rotation_matrix_from_vectors(center_vector, target_z)
+    principal_axis = estimate_principal_axis_pca(np.asarray(pcd_rotated.points))
+    rotation_matrix = rotation_matrix_from_vectors(principal_axis, target_z)
     pcd_rotated.rotate(rotation_matrix, center=(0, 0, 0))
 
     basal_end, top_stats, bottom_stats = choose_basal_end(
@@ -351,6 +360,13 @@ def align_point_cloud_to_z(
         )
         pcd_rotated.rotate(adjust_matrix, center=(0, 0, 0))
 
+    pcd_rotated, manual_rotation_deg = apply_manual_rotation(
+        pcd_rotated,
+        rotate_x_deg=config.rotate_x_deg,
+        rotate_y_deg=config.rotate_y_deg,
+        rotate_z_deg=config.rotate_z_deg,
+    )
+
     pcd_rotated = anchor_basal_to_z_axis_origin(
         pcd_rotated,
         config.slicing_ratio,
@@ -360,8 +376,11 @@ def align_point_cloud_to_z(
     metadata = {
         "basal_end_before_flip": basal_end,
         "flipped": flipped,
+        "principal_axis_method": "pca",
+        "principal_axis_before_alignment": principal_axis.tolist(),
         "top_stats": top_stats,
         "bottom_stats": bottom_stats,
+        "manual_rotation_deg": manual_rotation_deg,
         "config": asdict(config),
     }
     return pcd_rotated, metadata

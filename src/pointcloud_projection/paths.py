@@ -15,3 +15,7 @@ def resolve_project_path(path: Path) -> Path:
 
 def format_project_path(path: Path) -> str:
     return os.path.relpath(path.resolve(), PROJECT_ROOT.resolve())
+
+
+def sort_files_by_import_time(paths: list[Path]) -> list[Path]:
+    return sorted(paths, key=lambda path: (path.stat().st_ctime_ns, path.name.lower()))

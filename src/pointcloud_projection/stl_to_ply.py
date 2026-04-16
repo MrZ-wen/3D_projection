@@ -4,8 +4,12 @@ import argparse
 import json
 from pathlib import Path
 
-from pointcloud_projection.io import load_point_cloud, save_point_cloud
-from pointcloud_projection.paths import format_project_path, resolve_project_path
+from pointcloud_projection.io import convert_input_to_ply
+from pointcloud_projection.paths import (
+    format_project_path,
+    resolve_project_path,
+    sort_files_by_import_time,
+)
 
 DEFAULT_OUTPUT_DIR = Path("stl_to_ply_output")
 
@@ -42,8 +46,12 @@ def collect_stl_files(input_path: Path) -> list[Path]:
         if input_path.suffix.lower() != ".stl":
             raise ValueError(f"Unsupported input file: {input_path}")
         return [input_path]
-    files = sorted(
-        path for path in input_path.iterdir() if path.is_file() and path.suffix.lower() == ".stl"
+    files = sort_files_by_import_time(
+        [
+            path
+            for path in input_path.iterdir()
+            if path.is_file() and path.suffix.lower() == ".stl"
+        ]
     )
     if not files:
         raise ValueError(f"No STL files found in: {input_path}")
@@ -51,11 +59,12 @@ def collect_stl_files(input_path: Path) -> list[Path]:
 
 
 def convert_one_file(input_path: Path, output_dir: Path, sample_points: int) -> dict[str, object]:
-    pcd, metadata = load_point_cloud(input_path, sample_points=sample_points)
+    pcd, metadata, saved_path = convert_input_to_ply(
+        input_path,
+        output_dir / f"{input_path.stem}.ply",
+        sample_points=sample_points,
+    )
     metadata["input_path"] = format_project_path(input_path)
-
-    output_path = output_dir / f"{input_path.stem}.ply"
-    saved_path = Path(save_point_cloud(pcd, output_path))
 
     summary = {
         "input": metadata,

@@ -44,3 +44,14 @@ def save_point_cloud(pcd: o3d.geometry.PointCloud, output_path: str | Path, writ
     if not ok:
         raise RuntimeError(f"Failed to write point cloud: {path}")
     return str(path)
+
+
+def convert_input_to_ply(
+    input_path: str | Path,
+    output_path: str | Path,
+    sample_points: int = 200000,
+    write_ascii: bool = True,
+) -> tuple[o3d.geometry.PointCloud, dict[str, object], Path]:
+    pcd, metadata = load_point_cloud(input_path, sample_points=sample_points)
+    saved_path = Path(save_point_cloud(pcd, output_path, write_ascii=write_ascii))
+    return pcd, metadata, saved_path

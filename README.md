@@ -2,6 +2,8 @@
 
 该项目用于处理 `stl` 或 `ply` 三维模型文件，复用 `3D_model_Gm_final` 中的关键预处理思路，完成以下流程：
 
+- 输入 `stl/ply` 文件
+- 统一转换为 `ply` 点云格式
 - 点云去噪
 - 姿态矫正到 `Z` 轴
 - 上下端（基部）判定与翻转
@@ -27,7 +29,10 @@ uv sync --extra dev
 - `--grid-size`：密度统计网格大小。
 - `--image-size`：投影图输出尺寸。
 - `--no-log-density`：关闭密度图的对数增强。
-- `--nb-neighbors`、`--std-ratio`、`--black-filter`、`--black-threshold`、`--slicing-ratio`、`--adjustment`：预处理相关参数。
+- `--nb-neighbors`、`--std-ratio`、`--black-filter`、`--black-threshold`、`--slicing-ratio`：预处理相关参数。
+- `--rotate-x-deg`、`--rotate-y-deg`、`--rotate-z-deg`：手动微调旋转角度，单位为度。
+- `--interactive-rotate`：单文件交互式旋转调参模式。
+- `--adjustment`：兼容旧逻辑的 `Y` 轴 `90°` 步进旋转参数。
 
 ## 用法
 
@@ -72,6 +77,41 @@ uv run pointcloud-project \
   --image-size 1024
 ```
 
+### 输出不正确时的两种调整方式
+
+如果某个样本姿态没有矫正到理想方向，可以选择以下两种方式：
+
+1. 直接输入旋转角度
+
+```bash
+uv run pointcloud-project \
+  --input /path/to/model.ply \
+  --rotate-x-deg 5 \
+  --rotate-y-deg -8 \
+  --rotate-z-deg 0
+```
+
+2. 进入交互式调参模式
+
+```bash
+uv run pointcloud-project \
+  --input /path/to/model.ply \
+  --interactive-rotate
+```
+
+交互模式只支持单文件输入。运行后程序会先生成预览图，然后在终端中持续等待命令。
+
+支持的命令如下：
+
+- `x <deg>`：在当前基础上给 `x` 轴增加角度
+- `y <deg>`：在当前基础上给 `y` 轴增加角度
+- `z <deg>`：在当前基础上给 `z` 轴增加角度
+- `set <x> <y> <z>`：直接设置三轴角度
+- `show`：按当前角度重新生成预览
+- `reset`：恢复到 `0/0/0`
+- `save`：接受当前角度并正式输出结果
+- `quit`：退出交互模式且不保存
+
 ## STL 转 PLY
 
 项目中额外提供了一个独立目录 `stl_to_ply_output/`，专门保存 `stl -> ply` 的转换结果。
@@ -108,6 +148,7 @@ uv run stl-to-ply \
 
 对每个输入文件，程序会生成：
 
+- `*_converted_input.ply`：统一转换后的输入点云
 - `*_cleaned.ply`：去噪并居中的点云
 - `*_aligned.ply`：姿态矫正后的点云
 - `*_projected_xy.ply`：投影到 `XY` 平面的点云
@@ -136,6 +177,10 @@ uv run stl-to-ply \
 │       ├── projection.py            # XY 投影、密度统计、灰度图与密度点云生成
 │       └── stl_to_ply.py            # `stl -> ply` 转换入口，支持单文件和目录批处理
 ├── tests/
+│   ├── test_cli.py                  # 主流程 CLI 与交互命令解析测试
+│   ├── test_io.py                   # 输入统一转 PLY 的测试
+│   ├── test_paths.py                # 路径与导入时间排序测试
+│   ├── test_preprocess.py           # PCA 主轴与手动旋转测试
 │   ├── test_projection.py           # 投影与密度计算相关测试
 │   └── test_stl_to_ply.py           # `stl -> ply` 转换相关测试
 ├── output/                          # 主流程默认输出目录
@@ -148,12 +193,12 @@ uv run stl-to-ply \
 
 - `src/pointcloud_projection/` 负责项目核心实现，适合直接复用或继续扩展
 - `cli.py` 负责主流程命令行入口，组织输入遍历、预处理、投影和结果汇总
-- `io.py` 负责模型读取与点云写出，是 `ply/stl` 输入输出的基础模块
-- `preprocess.py` 负责复用 `3D_model_Gm_final` 的预处理逻辑
+- `io.py` 负责模型读取、统一转 `ply` 和点云写出，是 `ply/stl` 输入输出的基础模块
+- `preprocess.py` 负责复用 `3D_model_Gm_final` 的预处理逻辑，并用 PCA 主轴完成姿态对齐
 - `projection.py` 负责把点云投影到 `XY` 平面，并生成灰度密度结果
 - `stl_to_ply.py` 负责独立的 `stl -> ply` 转换流程，不参与投影处理
 - `paths.py` 负责把路径统一解析到项目根目录
-- `tests/` 负责自动化验证投影流程和 `stl -> ply` 转换流程能否正常运行
+- `tests/` 负责自动化验证投影流程、交互命令、PCA 对齐和 `stl -> ply` 转换流程能否正常运行
 - `output/` 负责保存主流程生成的投影结果
 - `stl_to_ply_output/` 负责保存 `stl -> ply` 转换结果
 
@@ -215,9 +260,13 @@ uv run stl-to-ply --input /path/to/model.stl
 
 这个命令只负责把 `stl` 网格采样为 `ply` 点云，不做姿态矫正和投影。
 
+### 8. 交互式旋转模式适合什么场景？
+
+当某些样本经过自动 PCA 对齐后，投影方向仍然不理想时，可以用 `--interactive-rotate` 单独调一个文件，边看预览边微调角度。
+
 ## 实现说明
 
 - `ply` 输入会直接按点云读取。
-- `stl` 输入会先读取为三角网格，再采样为点云后进入相同流程。
+- `stl` 输入会先读取为三角网格，再采样为点云，并统一输出一个 `converted_input.ply` 后进入相同流程。
 - 灰度越亮，表示 `XY` 平面对应区域的点越密集。
-- 预处理核心逻辑来自 `3D_model_Gm_final/preprocess_3d_model.py`，当前项目对其进行了模块化封装，便于独立运行和批处理。
+- 预处理核心逻辑来自 `3D_model_Gm_final/preprocess_3d_model.py`，当前项目对其进行了模块化封装，便于独立运行、批处理和交互式调参。
