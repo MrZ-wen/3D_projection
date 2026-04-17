@@ -23,16 +23,34 @@ uv sync --extra dev
 
 ## 命令行参数
 
-- `--input` / `-i`：必填。输入文件或输入目录。
-- `--output-dir` / `-o`：可选。输出目录，默认是项目根目录下的 `output/`
-- `--sample-points`：仅对 `stl` 生效，控制网格采样点数。
-- `--grid-size`：密度统计网格大小。
-- `--image-size`：投影图输出尺寸。
-- `--no-log-density`：关闭密度图的对数增强。
-- `--nb-neighbors`、`--std-ratio`、`--black-filter`、`--black-threshold`、`--slicing-ratio`：预处理相关参数。
-- `--rotate-x-deg`、`--rotate-y-deg`、`--rotate-z-deg`：手动微调旋转角度，单位为度。
-- `--interactive-rotate`：单文件交互式旋转调参模式。
-- `--adjustment`：兼容旧逻辑的 `Y` 轴 `90°` 步进旋转参数。
+### `pointcloud-project`
+
+| 参数 | 是否必填 | 默认值 | 帮助信息 |
+| --- | --- | --- | --- |
+| `--input` / `-i` | 是 | 无 | 输入 `STL/PLY` 文件或包含 `STL/PLY` 文件的目录 |
+| `--output-dir` / `-o` | 否 | `output` | 输出目录，默认相对于项目根目录解析 |
+| `--sample-points` | 否 | `500000` | `STL` 转点云时的采样点数 |
+| `--grid-size` | 否 | `512` | 密度统计网格大小 |
+| `--image-size` | 否 | `1024` | 投影图输出尺寸 |
+| `--no-log-density` | 否 | `False` | 关闭密度图的对数增强 |
+| `--nb-neighbors` | 否 | `20` | 统计离群点去除时使用的邻居数 |
+| `--std-ratio` | 否 | `5.0` | 统计离群点去除的标准差阈值 |
+| `--black-filter` | 否 | `0` | 是否去除黑色点，`0` 为关闭，`1` 为开启 |
+| `--black-threshold` | 否 | `0.2` | 黑色点过滤阈值 |
+| `--slicing-ratio` | 否 | `0.10` | 上下端判定和基部锚定时的切片比例 |
+| `--adjustment` | 否 | `0.0` | 兼容旧逻辑的 `Y` 轴 `90°` 步进旋转参数，单位为 `pi/2` |
+| `--rotate-x-deg` | 否 | `0.0` | `X` 轴手动旋转角度，单位为度 |
+| `--rotate-y-deg` | 否 | `0.0` | `Y` 轴手动旋转角度，单位为度 |
+| `--rotate-z-deg` | 否 | `0.0` | `Z` 轴手动旋转角度，单位为度 |
+| `--interactive-rotate` | 否 | `False` | 开启单文件交互式旋转调参模式 |
+
+### `stl-to-ply`
+
+| 参数 | 是否必填 | 默认值 | 帮助信息 |
+| --- | --- | --- | --- |
+| `--input` / `-i` | 是 | 无 | 输入 `STL` 文件或包含 `STL` 文件的目录 |
+| `--output-dir` / `-o` | 否 | `stl_to_ply_output` | 转换结果输出目录，默认相对于项目根目录解析 |
+| `--sample-points` | 否 | `500000` | 每个 `STL` 网格采样生成的点数 |
 
 ## 用法
 

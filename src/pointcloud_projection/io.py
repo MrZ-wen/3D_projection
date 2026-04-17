@@ -22,7 +22,7 @@ def _copy_to_ascii_temp_path(path: Path) -> tuple[Path, tempfile.TemporaryDirect
     return temp_path, temp_dir
 
 
-def load_point_cloud(input_path: str | Path, sample_points: int = 200000) -> tuple[o3d.geometry.PointCloud, dict[str, object]]:
+def load_point_cloud(input_path: str | Path, sample_points: int = 500000) -> tuple[o3d.geometry.PointCloud, dict[str, object]]:
     path = Path(input_path)
     if not path.exists():
         raise FileNotFoundError(f"Input file not found: {path}")
@@ -85,7 +85,7 @@ def save_point_cloud(pcd: o3d.geometry.PointCloud, output_path: str | Path, writ
 def convert_input_to_ply(
     input_path: str | Path,
     output_path: str | Path,
-    sample_points: int = 200000,
+    sample_points: int = 500000,
     write_ascii: bool = True,
 ) -> tuple[o3d.geometry.PointCloud, dict[str, object], Path]:
     pcd, metadata = load_point_cloud(input_path, sample_points=sample_points)

@@ -44,7 +44,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--sample-points",
         type=int,
-        default=200000,
+        default=500000,
         help="Number of points sampled from STL meshes.",
     )
     parser.add_argument(
