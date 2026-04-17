@@ -55,7 +55,7 @@ def load_point_cloud(input_path: str | Path, sample_points: int = 500000) -> tup
         if mesh.is_empty():
             raise ValueError(f"Failed to read mesh from STL: {path}")
         mesh.compute_vertex_normals()
-        pcd = mesh.sample_points_uniformly(number_of_points=max(sample_points, 1000))
+        pcd = mesh.sample_points_poisson_disk(number_of_points=max(sample_points, 1000))
         metadata["source_type"] = "triangle_mesh"
         metadata["sample_points"] = max(sample_points, 1000)
         return pcd, metadata

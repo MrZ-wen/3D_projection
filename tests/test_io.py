@@ -70,3 +70,38 @@ def test_save_point_cloud_uses_ascii_temp_path_for_non_ascii_output(
     assert saved == str(output_path)
     assert output_path.exists()
     assert Path(captured["path"]).name.isascii()
+
+
+def test_load_point_cloud_uses_poisson_disk_sampling_for_stl(
+    tmp_path: Path, monkeypatch
+) -> None:
+    source_path = tmp_path / "mesh.stl"
+    source_path.write_text("solid mesh", encoding="utf-8")
+
+    class FakeMesh:
+        def is_empty(self) -> bool:
+            return False
+
+        def compute_vertex_normals(self) -> None:
+            return None
+
+        def sample_points_poisson_disk(self, number_of_points: int):
+            captured["number_of_points"] = number_of_points
+            pcd = o3d.geometry.PointCloud()
+            pcd.points = o3d.utility.Vector3dVector(np.array([[0.0, 0.0, 0.0]], dtype=float))
+            return pcd
+
+    captured = {}
+
+    def fake_read_triangle_mesh(path_str: str):
+        captured["path"] = path_str
+        return FakeMesh()
+
+    monkeypatch.setattr(o3d.io, "read_triangle_mesh", fake_read_triangle_mesh)
+
+    pcd, metadata = load_point_cloud(source_path, sample_points=12345)
+
+    assert len(pcd.points) == 1
+    assert metadata["source_type"] == "triangle_mesh"
+    assert metadata["sample_points"] == 12345
+    assert captured["number_of_points"] == 12345
