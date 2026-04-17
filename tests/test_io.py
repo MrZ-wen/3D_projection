@@ -5,7 +5,7 @@ from pathlib import Path
 import numpy as np
 import open3d as o3d
 
-from pointcloud_projection.io import convert_input_to_ply
+from pointcloud_projection.io import convert_input_to_ply, load_point_cloud, save_point_cloud
 
 
 def test_convert_input_to_ply_writes_output_file(tmp_path: Path) -> None:
@@ -24,3 +24,49 @@ def test_convert_input_to_ply_writes_output_file(tmp_path: Path) -> None:
     assert saved_path.exists()
     assert metadata["input_format"] == "ply"
     assert len(converted_pcd.points) == 2
+
+
+def test_load_point_cloud_uses_ascii_temp_path_for_non_ascii_input(
+    tmp_path: Path, monkeypatch
+) -> None:
+    source_path = tmp_path / "中文样本.ply"
+    source_path.write_text("placeholder", encoding="utf-8")
+
+    captured = {}
+
+    def fake_read_point_cloud(path_str: str):
+        captured["path"] = path_str
+        pcd = o3d.geometry.PointCloud()
+        pcd.points = o3d.utility.Vector3dVector(np.array([[0.0, 0.0, 0.0]], dtype=float))
+        return pcd
+
+    monkeypatch.setattr(o3d.io, "read_point_cloud", fake_read_point_cloud)
+
+    pcd, metadata = load_point_cloud(source_path)
+
+    assert len(pcd.points) == 1
+    assert metadata["input_format"] == "ply"
+    assert Path(captured["path"]).name.isascii()
+
+
+def test_save_point_cloud_uses_ascii_temp_path_for_non_ascii_output(
+    tmp_path: Path, monkeypatch
+) -> None:
+    output_path = tmp_path / "输出目录" / "结果文件.ply"
+    pcd = o3d.geometry.PointCloud()
+    pcd.points = o3d.utility.Vector3dVector(np.array([[0.0, 0.0, 0.0]], dtype=float))
+
+    captured = {}
+
+    def fake_write_point_cloud(path_str: str, point_cloud, write_ascii: bool = True):
+        captured["path"] = path_str
+        Path(path_str).write_text("ply", encoding="utf-8")
+        return True
+
+    monkeypatch.setattr(o3d.io, "write_point_cloud", fake_write_point_cloud)
+
+    saved = save_point_cloud(pcd, output_path)
+
+    assert saved == str(output_path)
+    assert output_path.exists()
+    assert Path(captured["path"]).name.isascii()
